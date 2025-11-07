@@ -51,3 +51,4 @@ MATCH_THRESHOLD = 0.70   # 匹配阈值（0.6-0.8，越高越严格）
 CLIP_BEFORE = 3.0  # 击杀前保留3秒
 CLIP_AFTER = 2.0   # 击杀后保留2秒
 TIME_WINDOW = 1.0  # 1秒内的检测合并为一个事件
+4.ffmpeg需要自己添加（这里我没有上传到git）
