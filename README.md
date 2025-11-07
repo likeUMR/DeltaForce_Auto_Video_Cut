@@ -52,3 +52,7 @@ CLIP_BEFORE = 3.0  # 击杀前保留3秒
 CLIP_AFTER = 2.0   # 击杀后保留2秒
 TIME_WINDOW = 1.0  # 1秒内的检测合并为一个事件
 4.ffmpeg需要自己添加（这里我没有上传到git）
+5.完整项目（包含数据）网盘链接
+通过网盘分享的文件：Delto
+链接: https://pan.baidu.com/s/1CofqU5x-QDQo5N6HEW58KQ 提取码: b4pe 
+--来自百度网盘超级会员v1的分享
