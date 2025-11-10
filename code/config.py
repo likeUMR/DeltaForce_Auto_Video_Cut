@@ -31,11 +31,11 @@ class Config:
     ROI_HEIGHT = 250
     
     # 检测参数
-    SAMPLE_FPS = 10  # 抽帧频率（每秒检测5帧）
-    MATCH_THRESHOLD = 0.9  # 模板匹配阈值（从0.999的结果看，可以设置较高）
+    SAMPLE_FPS = 3  # 抽帧频率（每秒检测3帧）
+    MATCH_THRESHOLD = 0.9  # 模板匹配阈值
     
     # 模板文件配置
-    TEMPLATE_DIR = r"C:\Users\admin\Desktop\Delto\match_templates\game_events"
+    TEMPLATE_DIR = r"..\match_templates\game_events"
     
     # 三角洲游戏的击杀图标模板
     # 根据你的模板文件，包含多种击杀类型
@@ -45,11 +45,14 @@ class Config:
         
         # 如果有其他模板，继续添加
     ]
+
+    # 剪辑效果参数
+    NEARBY_KILLS_MERGE = True  # 相近击杀片段合并: Ture 合并; False 不合并
     
     # 时间窗口参数
-    TIME_WINDOW = 3.0  # 1秒内算同一个击杀事件
-    CLIP_BEFORE = 2.0  # 击杀前保留3秒（可以看到击杀过程）
-    CLIP_AFTER = 2.0   # 击杀后保留2秒（可以看到击杀确认）
+    TIME_WINDOW = 3.0  # 时间窗口内的击杀帧合并至同一个击杀片段
+    CLIP_BEFORE = 4.0  # 击杀前保留的秒数（可以看到击杀过程）
+    CLIP_AFTER = 1   # 击杀后保留的秒数（可以看到击杀确认）
     
     # 输出参数
     OUTPUT_VIDEO_CODEC = "libx264"  # H.264编码

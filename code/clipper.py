@@ -6,6 +6,7 @@ import ffmpeg
 import os
 import sys
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import List
 from config import Config
@@ -156,9 +157,10 @@ class VideoClipper:
         # 计算所有片段的时间范围
         segments = []
         for idx, event in enumerate(kill_events, 1):
-            timestamp = event['timestamp']
-            start_time = max(0, timestamp - Config.CLIP_BEFORE)
-            end_time = min(video_duration, timestamp + Config.CLIP_AFTER)
+            start_timestamp = event['start_timestamp']
+            end_timestamp = event['end_timestamp']
+            start_time = max(0, start_timestamp - Config.CLIP_BEFORE)
+            end_time = min(video_duration, end_timestamp + Config.CLIP_AFTER)
             segments.append({
                 'idx': idx,
                 'event': event,
@@ -197,10 +199,10 @@ class VideoClipper:
             
             # 生成输出文件名（包含时间戳和模板信息）
             template_name = Path(event['template']).stem  # 去掉扩展名
-            output_file = self.output_dir / f"kill_{idx:03d}_{int(event['timestamp'])}s_{template_name}.mp4"
+            output_file = self.output_dir / f"kill_{idx:03d}_{int(event['start_timestamp'])}s_{template_name}.mp4"
             
             print(f"\n[片段 {idx}/{len(kill_events)}]")
-            print(f"  击杀时间: {event['timestamp']:.2f}s")
+            print(f"  击杀时间: {event['start_timestamp']:.2f}s")
             print(f"  击杀类型: {event['template']}")
             print(f"  相似度: {event['score']:.3f}")
             
@@ -222,3 +224,91 @@ class VideoClipper:
         print(f"{'='*70}")
         
         return output_files
+
+    def merge_kill_segments(self, output_files: List[str]) -> bool:
+        """
+        将剪辑后的击杀片段合并
+        返回: True: 合并成功; False: 合并失败
+        """
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
+            list_txt_path = f.name
+            for video_path in output_files:
+                # 写入文件
+                escaped_path = video_path.replace("'", "'\\''")  # 将单引号转义
+                f.write(f"file '{escaped_path}'\n")
+
+        final_output = self.output_dir / f"merged_video_segmentsNum_{str(len(output_files))}.mp4"
+        output_files.append(str(final_output))
+
+        # 构建 ffmpeg 命令
+        cmd = [
+            'ffmpeg', '-y',  # 覆盖输出
+            '-f', 'concat',  # 使用 concat demuxer
+            '-safe', '0',  # 允许绝对路径
+            '-i', list_txt_path,  # 输入清单文件
+            '-c:v', Config.OUTPUT_VIDEO_CODEC,  # 视频编码器
+            '-crf', str(Config.OUTPUT_CRF),  # 质量
+            '-preset', Config.OUTPUT_PRESET,  # 预设
+            '-c:a', 'aac',  # 音频编码
+            '-b:a', '192k',  # 音频码率
+            final_output  # 输出文件
+        ]
+
+        print("\n[合并片段]")
+        print("文件列表：")
+        for p in output_files:
+            print(f"  - {p}")
+
+        # 执行命令
+        try:
+            result = subprocess.run(
+                cmd,
+                check=True,
+                capture_output=True,
+                text=True,
+                errors="ignore",
+                timeout=300
+            )
+
+            if result.returncode == 0:
+                # 检查文件是否真的生成了
+                if Path(final_output).exists():
+                    file_size = Path(final_output).stat().st_size / (1024 * 1024)  # MB
+                    print("\n" + "=" * 70)
+                    print(f"  ✓ 拼接成功！")
+                    print(f"    输出文件: {final_output} ({file_size:.2f} MB)")
+                    print("=" * 70)
+                    return True
+                else:
+                    print(f"  ✗ FFmpeg 执行成功但文件未生成")
+                    return False
+            else:
+                print(f"  ✗ FFmpeg 执行失败 (返回码: {result.returncode})")
+                if result.stderr:
+                    # 只显示最后10行错误信息
+                    error_lines = result.stderr.split('\n')
+                    print(f"  错误信息:")
+                    for line in error_lines[-10:]:
+                        if line.strip():
+                            print(f"    {line}")
+                return False
+        except FileNotFoundError as e:
+            print(f"  ✗ 找不到文件: {e}")
+            return False
+
+        except subprocess.TimeoutExpired:
+            print(f"  ✗ 剪辑超时（超过5分钟）")
+            return False
+
+        except subprocess.CalledProcessError as e:
+            print("FFmpeg 执行失败！")
+            print("错误输出：")
+            print(e.stderr)
+            raise
+
+        finally:
+            # 清理临时文件
+            try:
+                os.unlink(list_txt_path)
+            except OSError:
+                pass

@@ -10,10 +10,11 @@ from config import Config
 
 
 class KillDetector:
-    def __init__(self, template_dir: str = Config.TEMPLATE_DIR):
+    def __init__(self, template_dir: str = Config.TEMPLATE_DIR, nearby_kills_merge: bool = Config.NEARBY_KILLS_MERGE):
         """初始化检测器，加载所有模板"""
         self.templates = []
         self.load_templates(template_dir)
+        self.nearby_kills_merge = nearby_kills_merge  # 相近击杀片段合并: Ture 合并; False 不合并
         
     def load_templates(self, template_dir: str):
         """加载所有击杀图标模板，并自动调整尺寸"""
@@ -190,7 +191,7 @@ class KillDetector:
             frame_count += 1
             
             # 显示进度（每10秒显示一次）
-            if frame_count % (fps * 10) == 0:
+            if frame_count % (int(fps + 0.5) * 10) == 0:
                 progress = (frame_count / total_frames) * 100
                 elapsed = frame_count / fps
                 print(f"  [{elapsed:6.1f}s / {duration:.1f}s] 进度: {progress:5.1f}% | 已检测: {len(detections)} 个")
@@ -213,57 +214,69 @@ class KillDetector:
         """
         if not detections:
             return []
-        
+
         # 按时间排序
         detections.sort(key=lambda x: x['timestamp'])
-        
+
         merged = []
         current_group = [detections[0]]
-        
+
         for i in range(1, len(detections)):
             current_detection = detections[i]
             last_in_group = current_group[-1]
-            
+
             # 检查时间差是否在窗口内
             time_diff = current_detection['timestamp'] - last_in_group['timestamp']
-            
+
             # 检查击杀类型是否相同
             same_type = current_detection['template'] == last_in_group['template']
-            
-            # 只有时间接近 且 类型相同 才合并
-            if time_diff <= Config.TIME_WINDOW and same_type:
+
+            # 时间相近时，相同类型击杀或self.nearby_kills_merge==True的帧划归到同一击杀片段
+            if time_diff < Config.TIME_WINDOW and (same_type or self.nearby_kills_merge):
                 current_group.append(current_detection)
             else:
-                # 否则，处理当前组并开始新组
-                # 选择相似度最高的作为代表
-                best = max(current_group, key=lambda x: x['score'])
-                merged.append(best)
+                # 否则，处理当前组并开始新组，并选取当前组第一帧为代表
+                merged.append({
+                    'start_timestamp': current_group[0]['timestamp'],
+                    'end_timestamp': current_group[-1]['timestamp'],
+                    'score': current_group[0]['score'],
+                    'template': current_group[0]['template'],
+                    'start_frame': current_group[0]['frame'],
+                    'end_frame': current_group[-1]['frame']
+                })
                 current_group = [current_detection]
-        
+
         # 处理最后一组
         if current_group:
-            best = max(current_group, key=lambda x: x['score'])
-            merged.append(best)
-        
+            merged.append({
+                'start_timestamp': current_group[0]['timestamp'],
+                'end_timestamp': current_group[-1]['timestamp'],
+                'score': current_group[0]['score'],
+                'template': current_group[0]['template'],
+                'start_frame': current_group[0]['frame'],
+                'end_frame': current_group[-1]['frame']
+            })
+
         print(f"\n[合并结果]")
         print(f"  原始检测: {len(detections)} 个")
         print(f"  合并后: {len(merged)} 个击杀事件")
         print(f"  时间窗口: {Config.TIME_WINDOW} 秒")
         print(f"  规则: 不同击杀类型不会合并")
-        
+
         # 统计击杀类型
         from collections import Counter
         kill_types = Counter([e['template'] for e in merged])
         print(f"\n击杀类型统计:")
         for kill_type, count in kill_types.most_common():
             print(f"  • {kill_type}: {count} 次")
-        
+
         print(f"\n击杀时间轴:")
         for idx, event in enumerate(merged, 1):
-            timestamp = event['timestamp']
+            timestamp = event['start_timestamp']
             minutes = int(timestamp // 60)
             seconds = timestamp % 60
+            duration = event['end_timestamp'] - event['start_timestamp']
             template_short = event['template'].replace('.png', '').replace('elimination_', '')
-            print(f"  击杀 {idx:2d}: {minutes:02d}:{seconds:05.2f} | 相似度: {event['score']:.3f} | 类型: {template_short}")
-        
+            print(f"  击杀 {idx:2d}: {minutes:02d}:{seconds:05.2f} | 相似度: {event['score']:.3f} | 类型: {template_short} | 持续时间: {duration:.2f}s")
+
         return merged

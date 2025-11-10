@@ -13,17 +13,21 @@ def main():
     # ===== 配置区域 - 修改这里的路径 =====
     
     # 输入视频路径（修改成你的视频文件路径）
-    VIDEO_PATH = r"C:\Users\admin\Desktop\Delto\test\test_video.mp4"
+    VIDEO_PATH = r"C:\Users\admin\Desktop\Delta force\test_video\test_video_1.mp4"
     
     # 输出目录
-    OUTPUT_DIR = r"C:\Users\admin\Desktop\Delto\output"
+    OUTPUT_DIR = r"C:\Users\admin\Desktop\Delta force\output_video"
     
     # 模板目录
-    TEMPLATE_DIR = r"C:\Users\admin\Desktop\Delto\match_templates\game_events"
+    TEMPLATE_DIR = r"..\match_templates\game_events"
     
     # FFmpeg 路径（如果系统PATH中有ffmpeg可以设为None）
     current_dir = Path(__file__).parent
     FFMPEG_PATH = str(current_dir / "ffmpeg" / "bin")  # 或者设为 None
+
+    # ============== 参数设置 ==============
+    nearby_kills_merge = True  # 时间相近的击杀合并至同一片段（无论击杀类型）
+    segment_merge_mode = True  # 是否将剪辑的片段进行合并, True: 额外输出片段合并视频, False: 不额外输出片段合并视频
     
     # ====================================
     
@@ -73,7 +77,7 @@ def main():
     print("\n[步骤 2/5] 加载击杀图标模板")
     print("=" * 70)
     try:
-        detector = KillDetector(template_dir=TEMPLATE_DIR)
+        detector = KillDetector(template_dir=TEMPLATE_DIR, nearby_kills_merge=nearby_kills_merge)
     except Exception as e:
         print(f"✗ 加载模板失败: {e}")
         import traceback
@@ -143,6 +147,12 @@ def main():
         import traceback
         traceback.print_exc()
         return
+
+    if segment_merge_mode:
+        print("\n" + "=" * 70)
+        print("拼接击杀片段")
+        print("=" * 70)
+        clipper.merge_kill_segments(output_files)
     
     # 完成
     print("\n" + "=" * 70)
@@ -153,7 +163,8 @@ def main():
     print(f"  • 视频文件: {Path(VIDEO_PATH).name}")
     print(f"  • 检测到的匹配点: {len(detections)} 个")
     print(f"  • 合并后的击杀事件: {len(kill_events)} 个")
-    print(f"  • 成功剪辑的片段: {len(output_files)} 个")
+    print(f"  • 成功剪辑的片段: {len(output_files) - 1 if segment_merge_mode else len(output_files)} 个")
+    print(f"  • 拼接文件: {len(output_files) - 1 if segment_merge_mode else 0} 个")
     
     # 按击杀类型统计
     if kill_events:
