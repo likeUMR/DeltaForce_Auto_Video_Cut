@@ -3,3 +3,4 @@
 **/__pycache__/
 code/ffmpeg/
 code/ffmpeg/**
+progress_report/
