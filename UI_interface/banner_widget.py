@@ -45,6 +45,11 @@ class BannerWidget(QWidget):
         self.video_duration = None
         self.video_resolution = None
         self.video_size = 0  # 视频文件大小（字节）
+        
+        # 存储原始视频信息（用于处理完成后对比显示）
+        self.original_duration = None  # 原始时长字符串
+        self.original_duration_seconds = 0.0  # 原始时长（秒）
+        self.original_size = 0  # 原始文件大小（字节）
         self.status = 'idle'  # idle, waiting, processing, completed
         self._progress = 0.0  # 使用私有变量存储实际值
         self.output_path = None
@@ -249,7 +254,7 @@ class BannerWidget(QWidget):
         else:
             return f"{size_bytes / (1024 * 1024):.1f} MB"
         
-    def set_video_info(self, video_path):
+    def set_video_info(self, video_path, video_info=None):
         """设置视频信息"""
         self.is_empty = False
         self.video_path = video_path
@@ -287,10 +292,23 @@ class BannerWidget(QWidget):
             except Exception as e:
                 print(f"[WARNING] 无法获取视频文件大小: {e}")
         
-        # 模拟视频信息（实际应该从视频文件读取）
-        self.video_duration = '00:05:23'
-        self.video_resolution = '1920x1080'
+        # 使用传入的视频信息，如果没有则使用默认值
+        if video_info:
+            self.video_duration = video_info.get('duration_str', '00:00:00')
+            self.video_resolution = f"{video_info.get('width', 0)}x{video_info.get('height', 0)}"
+            
+            # 存储原始信息
+            self.original_duration = self.video_duration
+            self.original_duration_seconds = video_info.get('duration', 0.0)
+        else:
+            # 默认值
+            self.video_duration = '00:00:00'
+            self.video_resolution = '0x0'
+        
         self.video_size = video_size
+        
+        # 存储原始大小
+        self.original_size = video_size
         
         # 显示：时长 | 分辨率 | 文件大小
         size_str = self.format_file_size(video_size)
@@ -368,87 +386,103 @@ class BannerWidget(QWidget):
         self.update()
         
     def start_progress_animation(self):
-        """开始进度动画"""
-        try:
-            print(f"[DEBUG] BannerWidget.start_progress_animation: Banner {self.index}")
-            self.status = 'processing'
-            self._progress = 0.0
-            
-            # 创建动画
-            print("[DEBUG] 创建QPropertyAnimation")
-            self.progress_animation = QPropertyAnimation(self, b"progress")
-            self.progress_animation.setDuration(5000)  # 5秒
-            self.progress_animation.setStartValue(0.0)
-            self.progress_animation.setEndValue(1.0)
-            print("[DEBUG] 启动动画")
-            self.progress_animation.start()
-            print("[DEBUG] 动画已启动")
-            
-            self.update()
-        except Exception as e:
-            print(f"[ERROR] start_progress_animation 发生错误: {e}")
-            import traceback
-            traceback.print_exc()
-            raise
+        """开始进度动画（已废弃，现在使用真实进度更新）"""
+        # 这个方法保留用于兼容，但不再使用固定5秒动画
+        # 真实进度通过set_progress方法更新
+        self.status = 'processing'
+        self._progress = 0.0
+        self.update()
         
-    def complete_processing(self):
+    def complete_processing(self, output_file=None):
         """完成处理"""
         self.status = 'completed'
         self._progress = 1.0
         
-        # 真实保存视频文件
-        if self.video_path:
-            print(f"[DEBUG] 开始保存视频: {self.video_path}")
-            self.output_path = save_video_with_prefix(self.video_path, prefix="[一杀一剪]")
-            
-            if self.output_path:
-                # 获取输出文件大小
-                output_size = 0
-                if os.path.exists(self.output_path):
-                    try:
-                        output_size = os.path.getsize(self.output_path)
-                    except Exception as e:
-                        print(f"[WARNING] 无法获取输出文件大小: {e}")
-                
-                # 更新第二行显示：时长 | 分辨率 | 处理后文件大小（文件大小使用绿色）
-                if output_size > 0:
-                    size_str = self.format_file_size(output_size)
-                    # 使用HTML格式，文件大小部分显示为绿色
-                    self.info_label.setText(
-                        f'{self.video_duration} | {self.video_resolution} | '
-                        f'<span style="color: #34a853;">{size_str}</span>'
-                    )
-                else:
-                    # 如果无法获取大小，保持原显示
-                    size_str = self.format_file_size(self.video_size) if hasattr(self, 'video_size') else '0 B'
-                    self.info_label.setText(
-                        f'{self.video_duration} | {self.video_resolution} | '
-                        f'<span style="color: #34a853;">{size_str}</span>'
-                    )
-                
-                # 更新序号标签样式为绿色
-                self.update_index_label_style()
-                
-                if self.path_label:
-                    self.path_label.setText(f'已保存到：{self.output_path}')
-                    self.path_label.setStyleSheet("""
-                        QLabel {
-                            color: #34a853;
-                            background-color: transparent;
-                        }
-                    """)
-                print(f"[DEBUG] 视频保存成功: {self.output_path}")
+        # 使用处理后的输出文件路径
+        if output_file and os.path.exists(output_file):
+            self.output_path = output_file
+            print(f"[DEBUG] 处理完成，输出文件: {self.output_path}")
+        else:
+            # 如果没有输出文件，使用原来的保存逻辑（添加前缀）
+            if self.video_path:
+                print(f"[DEBUG] 开始保存视频: {self.video_path}")
+                self.output_path = save_video_with_prefix(self.video_path, prefix="[一杀一剪]")
             else:
-                # 保存失败，显示错误信息
-                if self.path_label:
-                    self.path_label.setText(f'保存失败：{self.video_path}')
-                    self.path_label.setStyleSheet("""
-                        QLabel {
-                            color: #ea4335;
-                            background-color: transparent;
-                        }
-                    """)
-                print(f"[ERROR] 视频保存失败: {self.video_path}")
+                self.output_path = None
+        
+        if self.output_path:
+            # 获取输出文件信息（时长和大小）
+            output_size = 0
+            output_duration_str = None
+            output_duration_seconds = 0.0
+            
+            if os.path.exists(self.output_path):
+                try:
+                    # 获取文件大小
+                    output_size = os.path.getsize(self.output_path)
+                    
+                    # 获取视频时长（需要从VideoProcessor获取）
+                    # 这里我们需要从外部传入，或者在这里重新获取
+                    # 为了简化，我们先尝试从processor获取，如果没有则使用原始时长
+                    from UI_interface.video_processor import VideoProcessor
+                    processor = VideoProcessor()
+                    try:
+                        output_info = processor.get_video_info(self.output_path)
+                        output_duration_seconds = output_info.get('duration', 0.0)
+                        output_duration_str = output_info.get('duration_str', '00:00:00')
+                    except Exception as e:
+                        print(f"[WARNING] 无法获取输出视频时长: {e}")
+                        output_duration_str = self.video_duration
+                        output_duration_seconds = self.original_duration_seconds
+                        
+                except Exception as e:
+                    print(f"[WARNING] 无法获取输出文件大小: {e}")
+            
+            # 更新第二行显示：原始时长（划掉） 新时长（绿色） | 分辨率 | 原始大小（划掉） 新大小（绿色）
+            if output_size > 0 and output_duration_str:
+                # 格式化时长和大小
+                new_size_str = self.format_file_size(output_size)
+                original_size_str = self.format_file_size(self.original_size) if hasattr(self, 'original_size') else self.format_file_size(self.video_size)
+                original_duration = self.original_duration if hasattr(self, 'original_duration') else self.video_duration
+                
+                # 使用HTML格式：删除线 + 绿色新值
+                self.info_label.setText(
+                    f'<s style="color: #9aa0a6;">{original_duration}</s> '
+                    f'<span style="color: #34a853;">{output_duration_str}</span> | '
+                    f'{self.video_resolution} | '
+                    f'<s style="color: #9aa0a6;">{original_size_str}</s> '
+                    f'<span style="color: #34a853;">{new_size_str}</span>'
+                )
+            else:
+                # 如果无法获取新信息，保持原显示
+                size_str = self.format_file_size(self.video_size) if hasattr(self, 'video_size') else '0 B'
+                self.info_label.setText(
+                    f'{self.video_duration} | {self.video_resolution} | {size_str}'
+                )
+            
+            # 更新序号标签样式为绿色
+            self.update_index_label_style()
+            
+            if self.path_label:
+                self.path_label.setText(f'已保存到：{self.output_path}')
+                self.path_label.setStyleSheet("""
+                    QLabel {
+                        color: #34a853;
+                        background-color: transparent;
+                    }
+                """)
+            print(f"[DEBUG] 视频处理成功: {self.output_path}")
+        else:
+            # 处理失败，显示错误信息
+            if self.path_label:
+                self.path_label.setText(f'处理失败：{self.video_path}')
+                self.path_label.setStyleSheet("""
+                    QLabel {
+                        color: #ea4335;
+                        background-color: transparent;
+                    }
+                """)
+            print(f"[ERROR] 视频处理失败: {self.video_path}")
         
         if self.progress_animation:
             self.progress_animation.stop()

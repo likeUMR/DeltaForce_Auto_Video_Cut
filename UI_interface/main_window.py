@@ -6,9 +6,12 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QRect
 from PyQt6.QtGui import QFont, QColor, QPainter, QPixmap, QDragEnterEvent, QDropEvent
 import os
+from pathlib import Path
 
 # 使用绝对导入
 from UI_interface.banner_widget import BannerWidget
+from UI_interface.video_worker import VideoWorker
+from UI_interface.video_processor import VideoProcessor
 
 
 class MainWindow(QMainWindow):
@@ -18,6 +21,8 @@ class MainWindow(QMainWindow):
         self.processing_queue = []
         self.is_processing = False
         self.current_processing_index = -1
+        self.current_worker: VideoWorker = None  # 当前处理线程
+        self.processor = VideoProcessor()  # 用于获取视频信息
         self.init_ui()
         
     def init_ui(self):
@@ -225,7 +230,20 @@ class MainWindow(QMainWindow):
     def add_video_banner(self, video_path):
         """添加视频Banner"""
         banner = BannerWidget(is_empty=False, index=len(self.banner_list) + 1)
-        banner.set_video_info(video_path)
+        
+        # 获取视频信息
+        try:
+            video_info = self.processor.get_video_info(video_path)
+            print(f"[DEBUG] 获取视频信息: {video_path}")
+            print(f"[DEBUG] 视频信息: {video_info}")
+        except Exception as e:
+            print(f"[WARNING] 无法获取视频信息: {e}")
+            import traceback
+            traceback.print_exc()
+            video_info = None
+        
+        # 设置视频信息
+        banner.set_video_info(video_path, video_info)
         banner.delete_requested.connect(self.on_banner_deleted)
         
         # 插入到倒数第二个位置（在stretch之前）
@@ -276,6 +294,14 @@ class MainWindow(QMainWindow):
         if self.is_processing:
             self.is_processing = False
             self.current_processing_index = -1
+            
+            # 停止当前工作线程
+            if self.current_worker and self.current_worker.isRunning():
+                print("[DEBUG] 停止视频处理线程")
+                self.current_worker.terminate()
+                self.current_worker.wait()
+                self.current_worker = None
+            
             # 重置所有Banner状态
             for banner in self.banner_list:
                 banner.reset_status()
@@ -345,36 +371,111 @@ class MainWindow(QMainWindow):
                 print("[DEBUG] 处理完成或已停止")
                 self.is_processing = False
                 self.current_processing_index = -1
+                self.current_worker = None
                 return
                 
             current_banner = self.processing_queue[self.current_processing_index]
             print(f"[DEBUG] 开始处理视频 {self.current_processing_index + 1}/{len(self.processing_queue)}")
             
-            # 开始进度动画
-            print("[DEBUG] 启动进度动画")
-            current_banner.start_progress_animation()
-            print("[DEBUG] 进度动画已启动")
+            # 设置状态为处理中
+            current_banner.set_status('processing')
             
-            # 5秒后完成
-            print("[DEBUG] 设置5秒后完成的定时器")
-            QTimer.singleShot(5000, lambda banner=current_banner: self.on_video_processed(banner))
-            print("[DEBUG] 定时器已设置")
+            # 创建并启动工作线程
+            video_path = current_banner.video_path
+            output_dir = str(Path(video_path).parent)  # 中间文件输出目录（视频所在目录）
+            
+            # 生成最终输出文件路径：[一杀一剪]原文件名.扩展名
+            video_name = Path(video_path).stem
+            video_ext = Path(video_path).suffix
+            final_output_path = str(Path(video_path).parent / f"[一杀一剪]{video_name}{video_ext}")
+            
+            # 获取模板目录（从config或使用默认路径）
+            template_dir = None  # 使用VideoProcessor的默认路径
+            ffmpeg_path = None  # 使用系统PATH中的ffmpeg
+            
+            self.current_worker = VideoWorker(
+                video_path=video_path,
+                output_dir=output_dir,
+                final_output_path=final_output_path,
+                template_dir=template_dir,
+                ffmpeg_path=ffmpeg_path
+            )
+            
+            # 连接信号
+            self.current_worker.progress_updated.connect(
+                lambda progress, msg: self.on_progress_updated(current_banner, progress, msg)
+            )
+            self.current_worker.finished.connect(
+                lambda result: self.on_video_processed(current_banner, result)
+            )
+            self.current_worker.error_occurred.connect(
+                lambda error: self.on_video_error(current_banner, error)
+            )
+            
+            # 启动线程
+            print("[DEBUG] 启动视频处理线程")
+            self.current_worker.start()
+            
         except Exception as e:
             print(f"[ERROR] process_next_video 发生错误: {e}")
             import traceback
             traceback.print_exc()
             QMessageBox.critical(self, '错误', f'处理视频时发生错误:\n{str(e)}')
+            # 继续处理下一个
+            self.current_processing_index += 1
+            self.process_next_video()
+    
+    def on_progress_updated(self, banner, progress: float, message: str):
+        """处理进度更新"""
+        try:
+            print(f"[DEBUG] 进度更新: {progress:.2%} - {message}")
+            # 更新进度条（0.0-1.0）
+            banner._progress = progress
+            banner.update()
+        except Exception as e:
+            print(f"[ERROR] 更新进度时发生错误: {e}")
+    
+    def on_video_error(self, banner, error: str):
+        """处理视频处理错误"""
+        try:
+            print(f"[ERROR] 视频处理错误: {error}")
+            banner.set_status('idle')
+            banner.reset_status()
+            QMessageBox.warning(self, '处理失败', f'视频处理失败:\n{error}')
+            
+            # 继续处理下一个
+            self.current_processing_index += 1
+            self.process_next_video()
+        except Exception as e:
+            print(f"[ERROR] 处理错误回调时发生错误: {e}")
         
-    def on_video_processed(self, banner):
+    def on_video_processed(self, banner, result: dict):
         """视频处理完成"""
         try:
-            print(f"[DEBUG] on_video_processed: is_processing={self.is_processing}")
+            print(f"[DEBUG] on_video_processed: is_processing={self.is_processing}, result={result}")
             if not self.is_processing:
                 print("[DEBUG] 处理已停止，忽略完成回调")
                 return
-                
-            print("[DEBUG] 完成当前视频处理")
-            banner.complete_processing()
+            
+            if result.get('success'):
+                print("[DEBUG] 完成当前视频处理")
+                # 使用最终输出文件路径
+                output_file = result.get('output_file') or (result.get('output_files', [None])[0] if result.get('output_files') else None)
+                # 传递输出文件信息（如果可用）
+                banner.complete_processing(output_file)
+            else:
+                # 处理失败
+                error_msg = result.get('error', '未知错误')
+                print(f"[ERROR] 视频处理失败: {error_msg}")
+                banner.set_status('idle')
+                banner.reset_status()
+                QMessageBox.warning(self, '处理失败', f'视频处理失败:\n{error_msg}')
+            
+            # 清理工作线程
+            if self.current_worker:
+                self.current_worker.quit()
+                self.current_worker.wait()
+                self.current_worker = None
             
             # 处理下一个
             self.current_processing_index += 1
@@ -389,6 +490,7 @@ class MainWindow(QMainWindow):
                 print("[DEBUG] 所有视频处理完成")
                 self.is_processing = False
                 self.current_processing_index = -1
+                self.current_worker = None
         except Exception as e:
             print(f"[ERROR] on_video_processed 发生错误: {e}")
             import traceback

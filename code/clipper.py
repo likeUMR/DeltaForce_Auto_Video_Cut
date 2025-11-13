@@ -2,14 +2,22 @@
 视频剪辑模块 - 三角洲游戏版本
 使用 FFmpeg 剪辑击杀片段
 """
-import ffmpeg
 import os
 import sys
 import subprocess
 import tempfile
+import json
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 from config import Config
+
+# 尝试导入ffmpeg-python，如果失败则使用subprocess作为备选
+try:
+    import ffmpeg
+    FFMPEG_PYTHON_AVAILABLE = hasattr(ffmpeg, 'probe')
+except (ImportError, AttributeError):
+    FFMPEG_PYTHON_AVAILABLE = False
+    ffmpeg = None
 
 
 class VideoClipper:
@@ -57,12 +65,56 @@ class VideoClipper:
         """获取视频总时长"""
         try:
             print(f"\n[获取视频信息] {Path(self.input_video).name}")
-            probe = ffmpeg.probe(self.input_video)
-            duration = float(probe['streams'][0]['duration'])
-            print(f"  视频时长: {duration:.2f} 秒 ({int(duration//60)}分{int(duration%60)}秒)")
+            probe = None
+            
+            # 方法1: 使用ffmpeg-python
+            if FFMPEG_PYTHON_AVAILABLE:
+                try:
+                    probe = ffmpeg.probe(self.input_video)
+                except Exception as e:
+                    print(f"  [DEBUG] ffmpeg.probe失败: {e}，尝试使用ffprobe命令")
+            
+            # 方法2: 使用ffprobe命令（备选方案）
+            if probe is None:
+                cmd = ['ffprobe', '-v', 'error', '-print_format', 'json',
+                       '-show_format', '-show_streams', self.input_video]
+                
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    encoding='utf-8',
+                    errors='ignore',
+                    timeout=30
+                )
+                
+                if result.returncode == 0:
+                    probe = json.loads(result.stdout)
+                else:
+                    raise ValueError(f"ffprobe执行失败: {result.stderr}")
+            
+            # 获取时长
+            duration = 0.0
+            # 优先从format获取
+            if 'format' in probe and 'duration' in probe['format']:
+                duration = float(probe['format']['duration'])
+            # 否则从video stream获取
+            elif 'streams' in probe and len(probe['streams']) > 0:
+                for stream in probe['streams']:
+                    if stream.get('codec_type') == 'video' and 'duration' in stream:
+                        duration = float(stream['duration'])
+                        break
+            
+            if duration > 0:
+                print(f"  视频时长: {duration:.2f} 秒 ({int(duration//60)}分{int(duration%60)}秒)")
+            else:
+                print(f"  ⚠ 无法获取视频时长，使用默认值0")
+            
             return duration
         except Exception as e:
             print(f"  ✗ 获取视频信息失败: {e}")
+            import traceback
+            traceback.print_exc()
             raise
     
     def clip_segment(self, start_time: float, end_time: float, output_file: str):

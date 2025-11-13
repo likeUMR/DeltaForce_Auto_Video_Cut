@@ -18,29 +18,145 @@ class KillDetector:
         
     def load_templates(self, template_dir: str):
         """加载所有击杀图标模板，并自动调整尺寸"""
+        print(f"\n[加载模板] 开始")
+        print(f"  传入的模板目录参数: {template_dir}")
+        print(f"  类型: {type(template_dir)}")
+        
         template_path = Path(template_dir)
+        print(f"  转换后的Path对象: {template_path}")
+        print(f"  是否为绝对路径: {template_path.is_absolute()}")
+        print(f"  路径是否存在: {template_path.exists()}")
+        
         if not template_path.exists():
-            raise FileNotFoundError(f"模板目录不存在: {template_dir}")
+            # 尝试解析路径
+            resolved_path = template_path.resolve()
+            print(f"  解析后的路径: {resolved_path}")
+            print(f"  解析后路径是否存在: {resolved_path.exists()}")
+            
+            if resolved_path.exists():
+                template_path = resolved_path
+                print(f"  ✓ 使用解析后的路径: {template_path}")
+            else:
+                raise FileNotFoundError(
+                    f"模板目录不存在:\n"
+                    f"  原始路径: {template_dir}\n"
+                    f"  Path对象: {template_path}\n"
+                    f"  解析路径: {resolved_path}"
+                )
         
         print(f"\n[加载模板]")
-        print(f"  模板目录: {template_dir}")
+        print(f"  模板目录: {template_path}")
+        print(f"  绝对路径: {template_path.resolve()}")
         print(f"  ROI 区域尺寸: {Config.ROI_WIDTH} x {Config.ROI_HEIGHT}")
         print(f"  ROI 位置: ({Config.ROI_X}, {Config.ROI_Y})")
         
         loaded_count = 0
-        for template_name in Config.TEMPLATE_NAMES:
+        
+        # 获取要加载的模板文件列表
+        # 优先使用Config.TEMPLATE_NAMES，如果为空或所有文件都不存在，则自动发现目录中的所有PNG/JPG文件
+        template_names_to_load = Config.TEMPLATE_NAMES if Config.TEMPLATE_NAMES else []
+        
+        # 如果配置的模板列表为空，或者所有配置的模板都不存在，则自动发现
+        if not template_names_to_load:
+            # 自动发现目录中的所有图片文件
+            template_files_found = list(template_path.glob("*.png")) + list(template_path.glob("*.jpg"))
+            template_names_to_load = [f.name for f in template_files_found]
+            print(f"  [自动发现] 找到 {len(template_names_to_load)} 个模板文件")
+        else:
+            # 检查配置的模板文件是否存在
+            existing_templates = []
+            missing_templates = []
+            for template_name in template_names_to_load:
+                if (template_path / template_name).exists():
+                    existing_templates.append(template_name)
+                else:
+                    missing_templates.append(template_name)
+            
+            # 如果有缺失的模板，尝试自动发现
+            if missing_templates:
+                print(f"  ⚠ 配置的模板文件缺失: {missing_templates}")
+                template_files_found = list(template_path.glob("*.png")) + list(template_path.glob("*.jpg"))
+                found_names = [f.name for f in template_files_found]
+                print(f"  [自动发现] 目录中的模板文件: {found_names}")
+                # 使用找到的文件（优先使用配置中存在的，然后补充发现的）
+                template_names_to_load = existing_templates + [name for name in found_names if name not in existing_templates]
+        
+        # 加载模板文件
+        print(f"\n[加载模板] 开始加载 {len(template_names_to_load)} 个模板文件")
+        for idx, template_name in enumerate(template_names_to_load, 1):
+            print(f"\n  [{idx}/{len(template_names_to_load)}] 处理模板: {template_name}")
             template_file = template_path / template_name
+            print(f"      完整路径: {template_file}")
+            print(f"      路径是否存在: {template_file.exists()}")
             
             if not template_file.exists():
-                print(f"  ⚠ 文件不存在: {template_name}")
-                continue
-                
-            template = cv2.imread(str(template_file))
-            if template is None:
-                print(f"  ✗ 无法读取: {template_name}")
+                print(f"      ⚠ 文件不存在: {template_name}")
+                # 尝试列出目录中的所有文件
+                if template_path.exists():
+                    all_files = sorted(template_path.iterdir())
+                    print(f"      目录中的所有文件 ({len(all_files)} 个):")
+                    for f in all_files:
+                        print(f"        - {f.name} ({'文件' if f.is_file() else '目录'})")
                 continue
             
+            # 检查文件大小
+            file_size = template_file.stat().st_size
+            print(f"      文件大小: {file_size} 字节")
+            
+            if file_size == 0:
+                print(f"      ✗ 文件大小为0，跳过")
+                continue
+            
+            # 尝试读取文件
+            # 直接使用cv2.imdecode从字节流读取（解决中文路径问题，避免cv2.imread的警告）
+            template = None
+            
+            try:
+                # 使用Python的open读取文件（支持中文路径），然后用cv2.imdecode解码
+                with open(template_file, 'rb') as f:
+                    image_bytes = f.read()
+                
+                if image_bytes:
+                    # 将字节转换为numpy数组
+                    image_array = np.frombuffer(image_bytes, dtype=np.uint8)
+                    
+                    # 抑制libpng警告：重定向stderr
+                    import os
+                    import sys
+                    from contextlib import redirect_stderr
+                    from io import StringIO
+                    
+                    # 临时重定向stderr以抑制libpng警告
+                    stderr_buffer = StringIO()
+                    with redirect_stderr(stderr_buffer):
+                        # 使用cv2.imdecode解码
+                        template = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+                    
+                    if template is not None:
+                        print(f"      ✓ 成功读取图像")
+                    else:
+                        print(f"      ✗ cv2.imdecode返回None，无法解码图像")
+                else:
+                    print(f"      ✗ 文件为空")
+                
+            except Exception as e:
+                print(f"      ✗ 读取文件时发生异常: {e}")
+                import traceback
+                traceback.print_exc()
+            
+            if template is None:
+                print(f"      ✗ 无法读取图像文件")
+                print(f"      可能原因: 文件格式不支持、文件损坏、路径编码问题")
+                # 尝试检查文件扩展名
+                ext = template_file.suffix.lower()
+                print(f"      文件扩展名: {ext}")
+                if ext not in ['.png', '.jpg', '.jpeg']:
+                    print(f"      ⚠ 警告: 扩展名可能不被支持")
+                continue
+            
+            print(f"      ✓ 成功读取图像")
             original_h, original_w = template.shape[:2]
+            print(f"      图像尺寸: {original_w} x {original_h}")
             
             # 检查模板是否过大，如果过大则缩放
             scale_factor = 1.0
@@ -70,8 +186,21 @@ class KillDetector:
                 'scaled': needs_resize
             })
             loaded_count += 1
+            print(f"      ✓ 模板已添加到列表 (当前已加载: {loaded_count} 个)")
+        
+        print(f"\n[加载模板] 加载完成")
+        print(f"  尝试加载的模板数量: {len(template_names_to_load)}")
+        print(f"  成功加载的模板数量: {loaded_count}")
+        print(f"  当前模板列表长度: {len(self.templates)}")
         
         if len(self.templates) == 0:
+            print(f"\n[ERROR] 没有成功加载任何模板！")
+            print(f"  模板目录: {template_path}")
+            print(f"  配置的模板列表: {Config.TEMPLATE_NAMES}")
+            print(f"  尝试加载的模板: {template_names_to_load}")
+            if template_path.exists():
+                all_files = list(template_path.glob("*"))
+                print(f"  目录中的所有文件: {[f.name for f in all_files]}")
             raise ValueError("没有成功加载任何模板！")
         
         print(f"\n  ✓ 共加载 {loaded_count} 个模板")
