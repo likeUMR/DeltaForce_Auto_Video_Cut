@@ -1,6 +1,21 @@
+# 项目配置
 .venv/
 .idea/
+
+# Python 缓存
 **/__pycache__/
+
+# ffmpeg 工具
 code/ffmpeg/
 code/ffmpeg/**
+
 progress_report/
+
+# poetry 配置文件
+poetry.lock
+pyproject.toml
+
+# PyInstaller 打包生成的文件
+build/
+dist/
+*.spec

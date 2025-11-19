@@ -481,7 +481,7 @@ class VideoProcessor:
             success = self.clipper.merge_kill_segments(output_files)
             if success:
                 # 合并后的文件命名规则：merged_video_segmentsNum_{数量}.mp4
-                merged_file = Path(output_dir) / f"merged_video_segmentsNum_{len(output_files)}.mp4"
+                merged_file = Path(output_dir) / f"merged_video_segmentsNum_{len(output_files) - 1}.mp4"
                 if merged_file.exists():
                     return str(merged_file)
             return None
